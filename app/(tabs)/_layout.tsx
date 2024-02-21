@@ -48,7 +48,7 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
-        name="two"
+        name="TabTwoScreen"
         options={{
           title: 'Ultimele antrenamente',
           tabBarIcon: ({ color }) => <TabBarIcon name="user" color={color} />,
