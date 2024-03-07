@@ -4,15 +4,17 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import MapView, { Marker, Polyline } from "react-native-maps";
 import * as Location from "expo-location";
 import TabTwoScreen from "./TabTwoScreen";
+import { useNavigation } from "expo-router";
 
 const Waiting_Driver_Screen = () => {
+    const navigation = useNavigation();
     const [currentLocation, setCurrentLocation] = useState(null);
     const [routeCoordinates, setRouteCoordinates] = useState([]);
     const [tracking, setTracking] = useState(false);
     const [distance, setDistance] = useState(0);
     const [lastTrackings, setLastTrackings] = useState([]);
     const [timer, setTimer] = useState(0);
-    let intervalId;
+    const [intervalId, setIntervalId] = useState(null);
 
     useEffect(() => {
         const requestLocationPermissions = async () => {
@@ -44,34 +46,38 @@ const Waiting_Driver_Screen = () => {
                 newLocation => {
                     const { latitude, longitude } = newLocation.coords;
                     setCurrentLocation({ latitude, longitude });
-                    setRouteCoordinates(prevRoute => [
-                        ...prevRoute,
-                        { latitude, longitude },
-                    ]);
 
-                    // Calculate distance covered
-                    if (routeCoordinates.length > 0) {
-                        const lastCoordinate = routeCoordinates[routeCoordinates.length - 1];
-                        const newDistance = distance + calculateDistance(
-                            lastCoordinate.latitude,
-                            lastCoordinate.longitude,
-                            latitude,
-                            longitude
-                        );
-                        setDistance(newDistance);
+                    if (tracking) {
+                        setRouteCoordinates(prevRoute => [
+                            ...prevRoute,
+                            { latitude, longitude },
+                        ]);
+
+                        // Calculate distance covered based on the new coordinates
+                        if (routeCoordinates.length > 1) { // Check if there are at least two coordinates
+                            const lastTwoCoordinates = routeCoordinates.slice(-2); // Get the last two coordinates
+                            const newDistance = distance + calculateDistance(
+                                lastTwoCoordinates[0].latitude,
+                                lastTwoCoordinates[0].longitude,
+                                lastTwoCoordinates[1].latitude,
+                                lastTwoCoordinates[1].longitude
+                            );
+                            setDistance(newDistance);
+                        }
                     }
                 }
             );
-
             // Clean up the location listener when the component unmounts
             return () => locationListener.remove();
         };
 
         if (tracking) {
             getLocation();
-            intervalId = setInterval(() => setTimer(prevTimer => prevTimer + 1), 1000);
+            const id = setInterval(() => setTimer(prevTimer => prevTimer + 1), 1000);
+            setIntervalId(id);
         } else {
             clearInterval(intervalId);
+            setIntervalId(null);
         }
 
         return () => clearInterval(intervalId);
@@ -85,9 +91,22 @@ const Waiting_Driver_Screen = () => {
     };
 
     const stopTracking = async () => {
-        await AsyncStorage.setItem("trackingSession", JSON.stringify(routeCoordinates));
-        setLastTrackings(prevTrackings => [...prevTrackings, { session: routeCoordinates, duration: timer }]);
         setTracking(false);
+        setTimer(0);
+        clearInterval(intervalId);
+        await AsyncStorage.setItem("trackingSession", JSON.stringify(routeCoordinates));
+
+        try {
+            const lastTrackingsString = await AsyncStorage.getItem("lastTrackings");
+            const prevTrackings = lastTrackingsString ? JSON.parse(lastTrackingsString) : [];
+            const updatedTrackings = [...prevTrackings, { session: routeCoordinates, duration: timer }];
+            setLastTrackings(updatedTrackings);
+            await AsyncStorage.setItem("lastTrackings", JSON.stringify(updatedTrackings));
+        } catch (error) {
+            console.error('Error storing last trackings:', error);
+        }
+
+        navigation.navigate('TabTwoScreen', { lastTrackings, setLastTrackings });
     };
 
     const calculateDistance = (lat1, lon1, lat2, lon2) => {
@@ -108,32 +127,36 @@ const Waiting_Driver_Screen = () => {
 
     return (
         <View style={styles.container}>
-            {currentLocation && (
-                <MapView
-                    style={styles.map}
-                    initialRegion={{
-                        latitude: currentLocation.latitude,
-                        longitude: currentLocation.longitude,
-                        latitudeDelta: 0.005,
-                        longitudeDelta: 0.005,
-                    }}
-                >
+            <MapView
+                style={styles.map}
+                region={{
+                    latitude: currentLocation?.latitude || 0,
+                    longitude: currentLocation?.longitude || 0,
+                    latitudeDelta: 0.005,
+                    longitudeDelta: 0.005,
+                }}
+            >
+                {tracking && (
                     <Polyline
                         coordinates={routeCoordinates}
                         strokeColor="#FF0000"
                         strokeWidth={2}
                     />
-                    {currentLocation && (
-                        <Marker
-                            coordinate={{
-                                latitude: currentLocation.latitude,
-                                longitude: currentLocation.longitude,
-                            }}
-                            title="Your Location"
-                        />
-                    )}
-                </MapView>
-            )}
+                )}
+                {currentLocation && (
+                    <Marker
+                        coordinate={{
+                            latitude: currentLocation.latitude,
+                            longitude: currentLocation.longitude,
+                        }}
+                        title="Your Location"
+                    />
+                )}
+            </MapView>
+            <View style={styles.infoContainer}>
+                <Text>Distance Covered: {distance.toFixed(2)} meters</Text>
+                <Text>Timer: {timer} seconds</Text>
+            </View>
             <View style={styles.buttonsContainer}>
                 <Button
                     title="Start Tracking"
@@ -146,9 +169,6 @@ const Waiting_Driver_Screen = () => {
                     disabled={!tracking}
                 />
             </View>
-            <Text>Distance Covered: {distance.toFixed(2)} meters</Text>
-            <Text>Timer: {timer} seconds</Text>
-            <TabTwoScreen lastTrackings={lastTrackings} />
         </View>
     );
 };
@@ -167,6 +187,15 @@ const styles = StyleSheet.create({
         flexDirection: "row",
         justifyContent: "space-around",
         marginBottom: 10,
+    },
+    infoContainer: {
+        position: 'absolute',
+        top: 10,
+        left: 10,
+        backgroundColor: 'white',
+        padding: 10,
+        borderRadius: 5,
+        zIndex: 9999,
     },
 });
 
